@@ -16,6 +16,7 @@ from pyctr.types.tmd import TitleMetadataReader
 parser = argparse.ArgumentParser(description='Generate Nintendo 3DS CMD files.')
 parser.add_argument('-t', '--tmd', help='tmd file', required=True)
 parser.add_argument('-m', '--movable', help='movable.sed file', required=True)
+parser.add_argument('-o', '--otp', help='otp.bin file, for TWLNAND contents')
 parser.add_argument('-b', '--boot9', help='boot9 file')
 parser.add_argument('--output-id', help='CMD content ID, default 00000001', default='00000001')
 
@@ -25,12 +26,22 @@ MISSING = b'\xff\xff\xff\xff'
 
 crypto = CryptoEngine()
 crypto.setup_sd_key_from_file(a.movable)
+try:
+    crypto.setup_keys_from_otp_file(a.otp)
+except FileNotFoundError:
+    pass
 tmd = TitleMetadataReader.from_file(a.tmd)
 dirname = os.path.dirname(a.tmd)
 if tmd.title_id.startswith('0004008c'):
     content_dir = os.path.join(dirname, '00000000')
 else:
     content_dir = dirname
+
+# TODO: check Download Play
+if tmd.title_id.startswith('00048'):
+    keyslot = Keyslot.CMACNANDDB
+else:
+    keyslot = Keyslot.CMACSDNAND
 
 highest_index = 0
 content_ids = {}
@@ -46,7 +57,7 @@ for chunk in tmd.chunk_records:
             data = header + chunk.cindex.to_bytes(4, 'little') + id_bytes
             data_hash = sha256(data)
 
-            c = crypto.create_cmac_object(Keyslot.CMACSDNAND)
+            c = crypto.create_cmac_object(keyslot)
             c.update(data_hash.digest())
             content_ids[chunk.cindex] = (id_bytes, c.digest())
     except FileNotFoundError:
@@ -74,7 +85,7 @@ final = bytes.fromhex(a.output_id)[::-1] \
         + len(ids_by_index).to_bytes(4, 'little') \
         + len(installed_ids).to_bytes(4, 'little') \
         + (1).to_bytes(4, 'little')
-c = crypto.create_cmac_object(Keyslot.CMACSDNAND)
+c = crypto.create_cmac_object(keyslot)
 c.update(final)
 final += c.digest()
 
