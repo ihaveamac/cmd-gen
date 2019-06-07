@@ -21,17 +21,24 @@ parser.add_argument('--output-id', help='CMD content ID, default 00000001', defa
 
 a = parser.parse_args()
 
+MISSING = b'\xff\xff\xff\xff'
+
 crypto = CryptoEngine()
 crypto.setup_sd_key_from_file(a.movable)
 tmd = TitleMetadataReader.from_file(a.tmd)
 dirname = os.path.dirname(a.tmd)
+if tmd.title_id.startswith('0004008c'):
+    content_dir = os.path.join(dirname, '00000000')
+else:
+    content_dir = dirname
 
-content_ids = []
-cmacs = []
+highest_index = 0
+content_ids = {}
 
 for chunk in tmd.chunk_records:
     try:
-        with open(os.path.join(dirname, chunk.id + '.app'), 'rb') as f:
+        with open(os.path.join(content_dir, chunk.id + '.app'), 'rb') as f:
+            highest_index = chunk.cindex
             f.seek(0x100)
             header = f.read(0x100)
 
@@ -41,18 +48,38 @@ for chunk in tmd.chunk_records:
 
             c = crypto.create_cmac_object(Keyslot.CMACSDNAND)
             c.update(data_hash.digest())
-            cmacs.append(c.digest())
-            content_ids.append(id_bytes)
+            content_ids[chunk.cindex] = (id_bytes, c.digest())
     except FileNotFoundError:
-        exit(f'Could not find {chunk.id}.app. Missing contents is currently not supported.')
+        # currently unknown if there's actually a process to generating the cmac for missing contents
+        pass
 
-final = bytes.fromhex(a.output_id)[::-1] + ((len(content_ids).to_bytes(4, 'little')) * 2) + (1).to_bytes(4, 'little')
+# add content IDs up to the last one
+ids_by_index = [MISSING] * (highest_index + 1)
+installed_ids = []
+cmacs = []
+for x in range(len(ids_by_index)):
+    try:
+        info = content_ids[x]
+    except KeyError:
+        # the 3DS actually puts either random data, or generates it using an unknown process.
+        # probably doesn't matter though, since these contents aren't installed
+        cmacs.append(b'\xdd' * 16)
+    else:
+        ids_by_index[x] = info[0]
+        cmacs.append(info[1])
+        installed_ids.append(info[0])
+installed_ids.sort(key=lambda x: int.from_bytes(x, 'little'))
+
+final = bytes.fromhex(a.output_id)[::-1] \
+        + len(ids_by_index).to_bytes(4, 'little') \
+        + len(installed_ids).to_bytes(4, 'little') \
+        + (1).to_bytes(4, 'little')
 c = crypto.create_cmac_object(Keyslot.CMACSDNAND)
 c.update(final)
 final += c.digest()
 
-final += b''.join(content_ids)
-final += b''.join(content_ids[::-1])
+final += b''.join(ids_by_index)
+final += b''.join(installed_ids)
 final += b''.join(cmacs)
 
 os.makedirs(os.path.join(dirname, 'cmd'), exist_ok=True)

@@ -4,6 +4,8 @@ Experimental script to generate CMD files for Nintendo 3DS SD titles.
 
 **Please do not make tutorials on this program yet. The tools are very early in development and not ready for general use.**
 
+The CMD format is explained on [3DBrew](https://www.3dbrew.org/wiki/Titles#Data_Structure).
+
 ## Setup
 movable.sed is required and can be provided with `-m` or `--movable`.
 
